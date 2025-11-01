@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - FBX loader with Concrete Floor</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<link type="text/css" rel="stylesheet" href="main.css">
+	</head>
+
+	<body>
+		<div id="info">
+			<a href="https://threejs.org" target="_blank" rel="noopener">three.js</a> - FBXLoader with Concrete Floor<br />
+			Character and animation from <a href="https://www.mixamo.com/" target="_blank" rel="noopener">Mixamo</a>
+		</div>
+
+		<script type="importmap">
+			{
+				"imports": {
+					"three": "../build/three.module.js",
+					"three/addons/": "./jsm/"
+				}
+			}
+		</script>
+
+		<script type="module">
+
+			import * as THREE from 'three';
+
+			import Stats from 'three/addons/libs/stats.module.js';
+
+			import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+			import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+			import { EXRLoader } from 'three/addons/loaders/EXRLoader.js';
+
+			const manager = new THREE.LoadingManager();
+
+			let camera, scene, renderer, stats, object, loader;
+			let mixer, floorMesh, fogParticles;
+			let envMap, audioListener, sound, audioLoader;
+
+			const clock = new THREE.Clock();
+
+			const params = {
+				asset: 'Mma Kick'
+			};
+
+			init();
+
+			function init() {
+
+				const container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 2000 );
+				camera.position.set( 100, 200, 300 );
+
+				scene = new THREE.Scene();
+				
+				// Bruma muy sutil
+				scene.fog = new THREE.Fog( 0x888888, 300, 1000 );
+
+				// Cargar EXR environment
+				loadEXREnvironment();
+
+				// Crear piso de concreto
+				createConcreteFloor();
+
+				// Inicializar audio
+				initAudio();
+
+				const hemiLight = new THREE.HemisphereLight( 0xffffff, 0x444444, 1 );
+				hemiLight.position.set( 0, 200, 0 );
+				scene.add( hemiLight );
+
+				const dirLight = new THREE.DirectionalLight( 0xffffff, 2 );
+				dirLight.position.set( 0, 200, 100 );
+				dirLight.castShadow = true;
+				dirLight.shadow.camera.top = 180;
+				dirLight.shadow.camera.bottom = - 100;
+				dirLight.shadow.camera.left = - 120;
+				dirLight.shadow.camera.right = 120;
+				scene.add( dirLight );
+
+				// Grid muy sutil
+				const grid = new THREE.GridHelper( 2000, 20, 0x000000, 0x000000 );
+				grid.material.opacity = 0.05;
+				grid.material.transparent = true;
+				scene.add( grid );
+
+				// Crear partículas de bruma muy sutiles
+				createFogParticles();
+			
+				loader = new FBXLoader( manager );
+				loadAsset( params.asset );
+
+				renderer = new THREE.WebGLRenderer( { antialias: true } );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				renderer.setAnimationLoop( animate );
+				renderer.shadowMap.enabled = true;
+				renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+				
+				// Configuración para HDR
+				renderer.toneMapping = THREE.ACESFilmicToneMapping;
+				renderer.toneMappingExposure = 1;
+				renderer.outputColorSpace = THREE.SRGBColorSpace;
+				
+				container.appendChild( renderer.domElement );
+
+				const controls = new OrbitControls( camera, renderer.domElement );
+				controls.target.set( 0, 100, 0 );
+				controls.update();
+
+				window.addEventListener( 'resize', onWindowResize );
+
+				// stats
+				stats = new Stats();
+				container.appendChild( stats.dom );
+
+			}
+
+			function initAudio() {
+				// Crear listener de audio y conectarlo a la cámara
+				audioListener = new THREE.AudioListener();
+				camera.add( audioListener );
+
+				// Crear el objeto de sonido
+				sound = new THREE.Audio( audioListener );
+
+				// Cargar el archivo de audio
+				audioLoader = new THREE.AudioLoader();
+				audioLoader.load( 'mk.mp3', function( buffer ) {
+					sound.setBuffer( buffer );
+					sound.setLoop( true ); // Repetir en bucle
+					sound.setVolume( 0.5 ); // Volumen fijo al 50%
+					
+					// Esperar interacción del usuario para reproducir
+					document.body.addEventListener( 'click', function startAudio() {
+						sound.play();
+						document.body.removeEventListener( 'click', startAudio );
+					} );
+				}, undefined, function( error ) {
+					console.error( 'Error loading audio file:', error );
+				} );
+			}
+
+			function createConcreteFloor() {
+				// Crear textura de concreto
+				const canvas = document.createElement('canvas');
+				canvas.width = 512;
+				canvas.height = 512;
+				const context = canvas.getContext('2d');
+
+				// Base de color concreto
+				context.fillStyle = '#7a7a7a';
+				context.fillRect(0, 0, 512, 512);
+
+				// Agregar textura de concreto con variaciones
+				for(let i = 0; i < 5000; i++) {
+					const x = Math.random() * 512;
+					const y = Math.random() * 512;
+					const size = Math.random() * 3 + 1;
+					
+					// Variaciones de gris para simular concreto
+					const grayValue = Math.random() * 40 + 100;
+					context.fillStyle = `rgb(${grayValue}, ${grayValue}, ${grayValue})`;
+					context.fillRect(x, y, size, size);
+				}
+
+				// Agregar algunas grietas pequeñas
+				context.strokeStyle = '#5a5a5a';
+				context.lineWidth = 1;
+				for(let i = 0; i < 50; i++) {
+					context.beginPath();
+					const startX = Math.random() * 512;
+					const startY = Math.random() * 512;
+					context.moveTo(startX, startY);
+					context.lineTo(startX + Math.random() * 30, startY + Math.random() * 30);
+					context.stroke();
+				}
+
+				const texture = new THREE.CanvasTexture(canvas);
+				texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+				texture.repeat.set(4, 4);
+
+				const floorMaterial = new THREE.MeshPhongMaterial({ 
+					map: texture,
+					color: 0x8a8a8a,
+					shininess: 10,
+					reflectivity: 0.1,
+					envMap: envMap
+				});
+
+				floorMesh = new THREE.Mesh( 
+					new THREE.PlaneGeometry( 2000, 2000 ), 
+					floorMaterial
+				);
+				floorMesh.rotation.x = - Math.PI / 2;
+				floorMesh.receiveShadow = true;
+				scene.add( floorMesh );
+			}
+
+			function createFogParticles() {
+				const particleGeometry = new THREE.BufferGeometry();
+				const particleCount = 80; // Menos partículas
+				const posArray = new Float32Array( particleCount * 3 );
+
+				for( let i = 0; i < particleCount * 3; i++ ) {
+					posArray[i] = (Math.random() - 0.5) * 800;
+					if( i % 3 === 1 ) { // posición Y
+						posArray[i] = Math.random() * 200 + 100; // Más alto
+					}
+				}
+
+				particleGeometry.setAttribute( 'position', new THREE.BufferAttribute( posArray, 3 ) );
+
+				const particleMaterial = new THREE.PointsMaterial({
+					size: 12,
+					color: 0xaaaaaa, // Color más neutro
+					transparent: true,
+					opacity: 0.15, // Mucho más transparente
+					blending: THREE.AdditiveBlending
+				});
+
+				fogParticles = new THREE.Points( particleGeometry, particleMaterial );
+				scene.add( fogParticles );
+			}
+
+			function loadEXREnvironment() {
+				const exrLoader = new EXRLoader();
+				exrLoader.load( 'abandoned_workshop_02_4k.exr', function ( texture ) {
+					
+					texture.mapping = THREE.EquirectangularReflectionMapping;
+					
+					envMap = texture;
+					scene.environment = envMap;
+					scene.background = envMap;
+					
+					scene.traverse( function ( child ) {
+						if ( child.isMesh && child.material ) {
+							child.material.envMap = envMap;
+							child.material.needsUpdate = true;
+						}
+					} );
+
+				}, undefined, function ( error ) {
+					console.error( 'Error loading EXR environment map:', error );
+					scene.background = new THREE.Color( 0x666666 );
+				} );
+			}
+
+			function loadAsset( asset ) {
+
+				loader.load( 'models/fbx/' + asset + '.fbx', function ( group ) {
+
+					if ( object ) {
+						object.traverse( function ( child ) {
+							if ( child.isSkinnedMesh ) {
+								child.skeleton.dispose();
+							}
+							if ( child.material ) {
+								const materials = Array.isArray( child.material ) ? child.material : [ child.material ];
+								materials.forEach( material => {
+									if ( material.map ) material.map.dispose();
+									material.dispose();
+								} );
+							}
+							if ( child.geometry ) child.geometry.dispose();
+						} );
+						scene.remove( object );
+					}
+
+					object = group;
+					
+					// Posicionar el personaje correctamente sobre el piso
+					object.position.y = 5;
+
+					if ( object.animations && object.animations.length ) {
+						mixer = new THREE.AnimationMixer( object );
+						const action = mixer.clipAction( object.animations[ 0 ] );
+						action.play();
+					} else {
+						mixer = null;
+					}
+
+					object.traverse( function ( child ) {
+						if ( child.isMesh ) {
+							child.castShadow = true;
+							child.receiveShadow = true;
+
+							if ( envMap ) {
+								child.material.envMap = envMap;
+								child.material.needsUpdate = true;
+							}
+						}
+					} );
+
+					scene.add( object );
+
+				}, undefined, function ( error ) {
+					console.error( 'Error loading FBX:', error );
+				} );
+			}
+
+			function onWindowResize() {
+				camera.aspect = window.innerWidth / window.innerHeight;
+				camera.updateProjectionMatrix();
+				renderer.setSize( window.innerWidth, window.innerHeight );
+			}
+
+			function animate() {
+				const delta = clock.getDelta();
+
+				if ( mixer ) mixer.update( delta );
+
+				// Animar partículas de bruma muy suavemente
+				if ( fogParticles ) {
+					const positions = fogParticles.geometry.attributes.position.array;
+					for( let i = 0; i < positions.length; i += 3 ) {
+						// Movimiento muy suave
+						positions[i] += (Math.random() - 0.5) * 0.1;
+						positions[i + 2] += (Math.random() - 0.5) * 0.1;
+					}
+					fogParticles.geometry.attributes.position.needsUpdate = true;
+				}
+
+				renderer.render( scene, camera );
+				stats.update();
+			}
+
+		</script>
+
+	</body>
+</html>
